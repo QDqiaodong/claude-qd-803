@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,21 +20,26 @@ import com.dyeing.mill.domain.DyeVat;
 import com.dyeing.mill.dto.CartAssignRequest;
 import com.dyeing.mill.dto.CartStatusRequest;
 import com.dyeing.mill.dto.CustomerMeterDTO;
+import com.dyeing.mill.event.BathOrderInvalidationListener;
 import com.dyeing.mill.repository.ClothCartRepository;
 import com.dyeing.mill.repository.DyeVatRepository;
 
 /**
  * 布车流转业务：排缸（染缸时段冲突校验）、状态流转、客户米数汇总。
+ * 排缸结果以 assignToken 标识：每次排缸换新令牌，事务提交后把引用旧排缸结果的待确认开缸单标失效。
  */
 @Service
 public class CartService {
 
     private final ClothCartRepository cartRepository;
     private final DyeVatRepository vatRepository;
+    private final BathOrderInvalidationListener bathInvalidation;
 
-    public CartService(ClothCartRepository cartRepository, DyeVatRepository vatRepository) {
+    public CartService(ClothCartRepository cartRepository, DyeVatRepository vatRepository,
+                       BathOrderInvalidationListener bathInvalidation) {
         this.cartRepository = cartRepository;
         this.vatRepository = vatRepository;
+        this.bathInvalidation = bathInvalidation;
     }
 
     /** 报废布车已被 @SQLRestriction 全局过滤，这里拿到的都是有效布车 */
@@ -87,7 +93,13 @@ public class CartService {
         cart.setDyeStartTime(start);
         cart.setDyeEndTime(end);
         cart.setStatus("DYEING");
-        return cartRepository.save(cart);
+        // 每次排缸都换新令牌：引用旧排缸结果的待确认开缸单随之失效
+        String newToken = UUID.randomUUID().toString().replace("-", "");
+        cart.setAssignToken(newToken);
+        ClothCart saved = cartRepository.save(cart);
+        bathInvalidation.afterCartAssignmentCommit(saved.getId(), newToken,
+                "布车已重新排缸到 " + vat.getVatCode() + "（时段 " + start + " ~ " + end + "）");
+        return saved;
     }
 
     /**
@@ -109,6 +121,15 @@ public class CartService {
             cart.setVatCode(null);
             cart.setDyeStartTime(null);
             cart.setDyeEndTime(null);
+            clearAssignment(cart, "布车返修，已退出原染缸排缸");
+        }
+        if ("PENDING".equals(status) && cart.getVatId() != null) {
+            // 从在染拖回待排产：视同退出排缸
+            cart.setVatId(null);
+            cart.setVatCode(null);
+            cart.setDyeStartTime(null);
+            cart.setDyeEndTime(null);
+            clearAssignment(cart, "布车被拖回待排产，原排缸结果作废");
         }
         if (request.getMeters() != null) {
             cart.setMeters(request.getMeters());
@@ -118,6 +139,16 @@ public class CartService {
         }
         cart.setStatus(status);
         return cartRepository.save(cart);
+    }
+
+    /**
+     * 清空排缸结果：令牌置 null，事务提交后把挂在旧排缸结果上的待确认开缸单标失效。
+     */
+    private void clearAssignment(ClothCart cart, String detail) {
+        if (cart.getAssignToken() != null) {
+            cart.setAssignToken(null);
+            bathInvalidation.afterCartAssignmentCommit(cart.getId(), null, detail);
+        }
     }
 
     /**

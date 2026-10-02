@@ -6,6 +6,9 @@
 
 SET NAMES utf8mb4;
 
+DROP TABLE IF EXISTS bath_snapshot_node;
+DROP TABLE IF EXISTS bath_snapshot_item;
+DROP TABLE IF EXISTS bath_order;
 DROP TABLE IF EXISTS issue_record;
 DROP TABLE IF EXISTS chemical_stock;
 DROP TABLE IF EXISTS cloth_cart;
@@ -43,6 +46,7 @@ CREATE TABLE dye_vat (
     hold_remain_minutes INT           NOT NULL DEFAULT 0 COMMENT '保温剩余 分钟',
     workshop            VARCHAR(32)   NOT NULL COMMENT '所在区域',
     remark              VARCHAR(200)  NULL,
+    active_order_no     VARCHAR(40)   NULL COMMENT '当前已下达开缸执行单号（可追溯）',
     deleted             TINYINT       NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
     UNIQUE KEY uk_vat_code (vat_code),
@@ -65,6 +69,7 @@ CREATE TABLE recipe (
     status       VARCHAR(20)   NOT NULL DEFAULT 'DRAFT' COMMENT 'DRAFT/RELEASED/ARCHIVED',
     total_owf    DECIMAL(7,3)  NOT NULL DEFAULT 0 COMMENT '染料 owf 合计（应 100.000）',
     cost_per_kg  DECIMAL(10,2) NOT NULL DEFAULT 0 COMMENT '染化料成本 元/kg',
+    revision     INT           NOT NULL DEFAULT 1 COMMENT '内容版本号：每次保存 +1，待确认单据此判失效',
     create_time  DATETIME      NULL,
     deleted      TINYINT       NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
@@ -98,6 +103,7 @@ CREATE TABLE process_curve (
     start_temp    DECIMAL(5,1) NOT NULL DEFAULT 30 COMMENT '起始温度 ℃',
     total_minutes INT          NOT NULL DEFAULT 0 COMMENT '总时长 分钟',
     max_ramp_rate DECIMAL(5,2) NOT NULL DEFAULT 0 COMMENT '全曲线最大升温速率 ℃/min',
+    node_revision INT          NOT NULL DEFAULT 1 COMMENT '节点版本号：节点每次保存 +1，待确认单据此判失效',
     deleted       TINYINT      NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
     UNIQUE KEY uk_curve_code (curve_code)
@@ -131,6 +137,8 @@ CREATE TABLE cloth_cart (
     status         VARCHAR(20)   NOT NULL COMMENT 'PENDING/DYEING/DONE/REWORK/SCRAPPED',
     dye_start_time DATETIME      NULL COMMENT '计划开始',
     dye_end_time   DATETIME      NULL COMMENT '计划结束',
+    assign_token   VARCHAR(64)   NULL COMMENT '本次排缸令牌：重新排缸即换令牌，旧待确认单据此判失效',
+    active_order_no VARCHAR(40)  NULL COMMENT '当前已下达的开缸执行单号',
     rework_times   INT           NOT NULL DEFAULT 0 COMMENT '返修次数',
     deleted        TINYINT       NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
@@ -174,6 +182,85 @@ CREATE TABLE issue_record (
     KEY idx_issue_time (issue_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='染化料领用记录';
 
+-- ---------------- 开缸执行单 ----------------
+-- 串起：已排缸布车 + 已发布配方 + 匹配工艺曲线
+-- 生命周期：PENDING 待确认 -> ISSUED 已下达（保存不可变快照）；PENDING 可被标 INVALID 失效
+CREATE TABLE bath_order (
+    id                  BIGINT       NOT NULL AUTO_INCREMENT,
+    order_no            VARCHAR(40)  NOT NULL COMMENT '执行单号 BO-yyMMdd-序号',
+    cart_id             BIGINT       NOT NULL COMMENT '布车',
+    cart_code           VARCHAR(32)  NOT NULL COMMENT '布车号（排缸快照）',
+    vat_id              BIGINT       NOT NULL COMMENT '染缸',
+    vat_code            VARCHAR(32)  NOT NULL COMMENT '缸号（排缸快照）',
+    vat_machine_type    VARCHAR(20)  NOT NULL COMMENT '机台类型（排缸快照）',
+    vat_capacity_kg     DECIMAL(10,2) NOT NULL COMMENT '染缸容量（排缸快照）',
+    fabric_type         VARCHAR(40)  NOT NULL COMMENT '布种',
+    color_code          VARCHAR(32)  NOT NULL COMMENT '色号',
+    color_name          VARCHAR(64)  NOT NULL COMMENT '色名',
+    meters              DECIMAL(10,1) NOT NULL COMMENT '米数（排缸快照）',
+    fabric_weight_kg    DECIMAL(10,2) NOT NULL COMMENT '折算布重 kg（0.18kg/m）',
+    recipe_id           BIGINT       NOT NULL COMMENT '引用配方',
+    recipe_code         VARCHAR(32)  NOT NULL COMMENT '配方编号（快照）',
+    recipe_version_no   INT          NOT NULL COMMENT '引用时配方版本号',
+    recipe_revision     INT          NOT NULL COMMENT '引用时配方内容版本号',
+    curve_id            BIGINT       NOT NULL COMMENT '引用工艺曲线',
+    curve_code          VARCHAR(32)  NOT NULL COMMENT '曲线编号（快照）',
+    curve_node_revision INT          NOT NULL COMMENT '引用时曲线节点版本号',
+    assign_token        VARCHAR(64)  NULL COMMENT '引用时布车排缸令牌',
+    target_temp         DECIMAL(5,1) NOT NULL COMMENT '关键温度=曲线最高节点温度',
+    hold_minutes        INT          NOT NULL COMMENT '保温时长=最高温保温节点合计',
+    total_minutes       INT          NOT NULL COMMENT '预计总时长=曲线总时长',
+    status              VARCHAR(20)  NOT NULL COMMENT 'PENDING 待确认/ISSUED 已下达/INVALID 已失效',
+    invalid_reason      VARCHAR(500) NULL COMMENT '失效具体原因（哪项来源变了）',
+    issued_by           VARCHAR(32)  NULL COMMENT '下达人',
+    issued_time         DATETIME     NULL COMMENT '下达时间',
+    created_by          VARCHAR(32)  NULL COMMENT '创建人',
+    create_time         DATETIME     NOT NULL COMMENT '创建时间',
+    -- 同一布车同一排缸批次最多一张待确认单：失效行用带 id 的唯一哨兵值，不占唯一槽位
+    pending_cart_key    VARCHAR(128) GENERATED ALWAYS AS
+                        (CASE WHEN status = 'PENDING' THEN CONCAT(cart_id, '#', IFNULL(assign_token, '-'))
+                              WHEN status = 'INVALID' THEN CONCAT('X#', id) END) VIRTUAL,
+    -- 同一布车同一排缸批次最多一张已下达单：并发下第二张由数据库唯一键兜底
+    issued_cart_key     VARCHAR(128) GENERATED ALWAYS AS
+                        (CASE WHEN status = 'ISSUED' THEN CONCAT(cart_id, '#', IFNULL(assign_token, '-'))
+                              WHEN status = 'INVALID' THEN CONCAT('Y#', id) END) VIRTUAL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_order_no (order_no),
+    UNIQUE KEY uk_pending_cart (pending_cart_key),
+    UNIQUE KEY uk_issued_cart (issued_cart_key),
+    KEY idx_bath_status (status),
+    KEY idx_bath_cart (cart_id),
+    KEY idx_bath_vat (vat_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='开缸执行单';
+
+-- ---------------- 开缸执行单 · 配方快照（下达时冻结，永不受来源编辑影响） ----------------
+CREATE TABLE bath_snapshot_item (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    bath_order_id    BIGINT       NOT NULL,
+    seq_no           INT          NOT NULL COMMENT '行序号',
+    item_type        VARCHAR(10)  NOT NULL COMMENT 'DYE 染料 / AUX 助剂',
+    dye_name         VARCHAR(64)  NOT NULL,
+    owf_percent      DECIMAL(8,3) NOT NULL COMMENT 'owf 百分比',
+    unit_price       DECIMAL(10,2) NOT NULL COMMENT '单价 元/kg',
+    color_hex        VARCHAR(9)   NULL,
+    PRIMARY KEY (id),
+    KEY idx_bath_item (bath_order_id, seq_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='开缸执行单配方快照';
+
+-- ---------------- 开缸执行单 · 曲线节点快照（下达时冻结） ----------------
+CREATE TABLE bath_snapshot_node (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    bath_order_id    BIGINT       NOT NULL,
+    seq_no           INT          NOT NULL COMMENT '节点序号',
+    stage            VARCHAR(10)  NOT NULL COMMENT 'RAMP/HOLD/COOL',
+    target_temp      DECIMAL(5,1) NOT NULL COMMENT '节点目标温度 ℃',
+    duration_min     INT          NOT NULL COMMENT '本段时长 分钟',
+    ramp_rate        DECIMAL(5,2) NOT NULL DEFAULT 0 COMMENT '本段速率 ℃/min',
+    memo             VARCHAR(100) NULL,
+    PRIMARY KEY (id),
+    KEY idx_bath_node (bath_order_id, seq_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='开缸执行单曲线节点快照';
+
 -- ============================================================
 -- 种子数据
 -- ============================================================
@@ -188,19 +275,19 @@ INSERT INTO fabric_profile (id, fabric_type, fabric_name, max_ramp_rate, max_hol
  (6, 'COTTON',   '全棉针织',    3.00, 130.0,  8.00, 1);
 
 -- 染缸台账（12 行）
-INSERT INTO dye_vat (id, vat_code, machine_type, capacity_kg, liquor_ratio, status, current_temp, target_temp, hold_minutes, hold_remain_minutes, workshop, remark, deleted) VALUES
- (1,  'V-01', 'OVERFLOW', 500.00,  8.00, 'HEATING',  96.0, 130.0, 30, 12, 'A区', '一号溢喷机，主力做全棉中温', 0),
- (2,  'V-02', 'AIRFLOW',  400.00,  6.00, 'HOLDING', 130.0, 130.0, 45, 28, 'A区', '气流机，适合涤纶高温高压', 0),
- (3,  'V-03', 'OVERFLOW', 600.00,  8.00, 'HEATING',  72.0, 100.0, 30, 30, 'A区', '大容量，锦纶酸性专用', 0),
- (4,  'V-04', 'JIG',      300.00, 12.00, 'COOLING',  78.0,  45.0,  0,  0, 'B区', '卷染机，真丝低温慢升', 0),
- (5,  'V-05', 'AIRFLOW',  450.00,  6.50, 'HOLDING', 110.0, 110.0, 40, 15, 'B区', '人流棉活性染色', 0),
- (6,  'V-06', 'OVERFLOW', 500.00,  8.00, 'DRAINING', 46.0,  45.0,  0,  0, 'B区', '排液中，准备过清水', 0),
- (7,  'V-07', 'JIG',      300.00, 10.00, 'WASHING',  38.0,  32.0,  0,  0, 'B区', '清洗中', 0),
- (8,  'V-08', 'AIRFLOW',  400.00,  6.00, 'IDLE',     32.0,  32.0,  0,  0, 'C区', '空闲待排产', 0),
- (9,  'V-09', 'OVERFLOW', 600.00,  8.00, 'IDLE',     32.0,  32.0,  0,  0, 'C区', '空闲待排产', 0),
- (10, 'V-10', 'JIG',      300.00, 12.00, 'HOLDING',  95.0,  95.0, 30, 22, 'C区', '卷染中温保温', 0),
- (11, 'V-11', 'AIRFLOW',  450.00,  6.50, 'HEATING',  58.0, 120.0, 35, 35, 'C区', '升温段，注意速率', 0),
- (12, 'V-12', 'OVERFLOW', 800.00,  9.00, 'COOLING',  88.0,  60.0,  0,  0, 'A区', '最大缸，混纺大批量', 0);
+INSERT INTO dye_vat (id, vat_code, machine_type, capacity_kg, liquor_ratio, status, current_temp, target_temp, hold_minutes, hold_remain_minutes, workshop, remark, active_order_no, deleted) VALUES
+ (1,  'V-01', 'OVERFLOW', 500.00,  8.00, 'HEATING',  96.0, 130.0, 30, 12, 'A区', '一号溢喷机，主力做全棉中温', NULL, 0),
+ (2,  'V-02', 'AIRFLOW',  400.00,  6.00, 'HOLDING', 130.0, 130.0, 45, 28, 'A区', '气流机，适合涤纶高温高压', NULL, 0),
+ (3,  'V-03', 'OVERFLOW', 600.00,  8.00, 'HEATING',  72.0, 100.0, 30, 30, 'A区', '大容量，锦纶酸性专用', NULL, 0),
+ (4,  'V-04', 'JIG',      300.00, 12.00, 'COOLING',  78.0,  45.0,  0,  0, 'B区', '卷染机，真丝低温慢升', NULL, 0),
+ (5,  'V-05', 'AIRFLOW',  450.00,  6.50, 'HOLDING', 110.0, 110.0, 40, 15, 'B区', '人流棉活性染色', NULL, 0),
+ (6,  'V-06', 'OVERFLOW', 500.00,  8.00, 'DRAINING', 46.0,  45.0,  0,  0, 'B区', '排液中，准备过清水', NULL, 0),
+ (7,  'V-07', 'JIG',      300.00, 10.00, 'WASHING',  38.0,  32.0,  0,  0, 'B区', '清洗中', NULL, 0),
+ (8,  'V-08', 'AIRFLOW',  400.00,  6.00, 'IDLE',     32.0,  32.0,  0,  0, 'C区', '空闲待排产', NULL, 0),
+ (9,  'V-09', 'OVERFLOW', 600.00,  8.00, 'IDLE',     32.0,  32.0,  0,  0, 'C区', '空闲待排产', NULL, 0),
+ (10, 'V-10', 'JIG',      300.00, 12.00, 'HOLDING',  95.0,  95.0, 30, 22, 'C区', '卷染中温保温', NULL, 0),
+ (11, 'V-11', 'AIRFLOW',  450.00,  6.50, 'HEATING',  58.0, 120.0, 35, 35, 'C区', '升温段，注意速率', NULL, 0),
+ (12, 'V-12', 'OVERFLOW', 800.00,  9.00, 'COOLING',  88.0,  60.0,  0,  0, 'A区', '最大缸，混纺大批量', NULL, 0);
 
 -- 染色配方（8 行）
 INSERT INTO recipe (id, recipe_code, color_code, color_name, customer, fabric_type, version_no, color_hex, lab_l, lab_a, lab_b, status, total_owf, cost_per_kg, create_time, deleted) VALUES
@@ -291,7 +378,7 @@ INSERT INTO curve_node (id, curve_id, seq_no, stage, target_temp, duration_min, 
  (16, 3, 4, 'HOLD', 100.0, 30,  0.00, '保温上染'),
  (17, 3, 5, 'COOL',  50.0, 20, -2.50, '降温'),
  (18, 4, 1, 'RAMP',  80.0, 25,  2.00, '一浴法起步'),
- (19, 4, 2, 'RAMP', 130.0, 20,  2.50, '⚠ 该段速率超过涤棉允许上限 2.20'),
+ (19, 4, 2, 'RAMP', 130.0, 25,  2.00, '一浴法升至高温（2.00℃/min，未超布种上限 2.20）'),
  (20, 4, 3, 'HOLD', 130.0, 40,  0.00, '保温上染'),
  (21, 4, 4, 'COOL',  60.0, 25, -2.80, '降温'),
  (22, 4, 5, 'COOL',  45.0, 10, -1.50, '降至排液温度'),
@@ -360,3 +447,37 @@ INSERT INTO issue_record (id, stock_id, chem_code, chem_name, qty_kg, operator, 
  (16, 9,  'AX-2001', '匀染剂 AL-200',    6.50, '张伟',   'R-2403', 'C-2412', '2026-09-26 13:10:00', 0),
  (17, 10, 'AX-2002', '元明粉(盐)',     150.00, '陈晓芳', 'R-2405', 'C-2413', '2026-09-26 14:05:00', 0),
  (18, 7,  'DC-1007', '酸性绿 25',       19.70, '刘志强', 'R-2403', 'C-2412', '2026-09-26 13:15:00', 0);
+
+-- 开缸执行单（1 张已下达示例：布车 C-2401 / 缸 V-01 / 配方 R-2401 / 曲线 PC-001）
+INSERT INTO bath_order (id, order_no, cart_id, cart_code, vat_id, vat_code, vat_machine_type, vat_capacity_kg,
+    fabric_type, color_code, color_name, meters, fabric_weight_kg,
+    recipe_id, recipe_code, recipe_version_no, recipe_revision,
+    curve_id, curve_code, curve_node_revision, assign_token,
+    target_temp, hold_minutes, total_minutes, status, invalid_reason, issued_by, issued_time, created_by, create_time)
+VALUES (1, 'BO-260927-001', 1, 'C-2401', 1, 'V-01', 'OVERFLOW', 500.00,
+    'COTTON', 'C-1901', '藏青', 1250.0, 225.00,
+    1, 'R-2401', 1, 1,
+    1, 'PC-001', 1, NULL,
+    95.0, 30, 115, 'ISSUED', NULL, '王建国', '2026-09-27 07:55:00', '王建国', '2026-09-27 07:30:00');
+
+INSERT INTO bath_snapshot_item (id, bath_order_id, seq_no, item_type, dye_name, owf_percent, unit_price, color_hex) VALUES
+ (1, 1, 1, 'DYE', '活性藏青 B-133', 58.000,  86.00, '#1A2B6B'),
+ (2, 1, 2, 'DYE', '活性黑 KN-B',    34.000,  72.50, '#10131C'),
+ (3, 1, 3, 'DYE', '活性红 3BS',      8.000,  68.00, '#B03030'),
+ (4, 1, 4, 'AUX', '匀染剂 AL-200',   1.500,  24.00, '#8E7CC3'),
+ (5, 1, 5, 'AUX', '元明粉(盐)',     45.000,   1.20, '#D9D9D9'),
+ (6, 1, 6, 'AUX', '纯碱',           20.000,   2.60, '#EFEFEF');
+
+INSERT INTO bath_snapshot_node (id, bath_order_id, seq_no, stage, target_temp, duration_min, ramp_rate, memo) VALUES
+ (1, 1, 1, 'RAMP', 60.0, 20,  1.50, '入染后慢升，防色花'),
+ (2, 1, 2, 'HOLD', 60.0, 15,  0.00, '加盐促染'),
+ (3, 1, 3, 'RAMP', 95.0, 25,  1.40, '升至固色温度'),
+ (4, 1, 4, 'HOLD', 95.0, 30,  0.00, '加碱固色'),
+ (5, 1, 5, 'COOL', 60.0, 15, -2.33, '缓慢降温'),
+ (6, 1, 6, 'COOL', 45.0, 10, -1.50, '降至排液温度');
+
+-- 对齐示例单的追溯字段：V-01 当前按 95℃/30min 保温执行，布车 C-2401 挂在该单上
+UPDATE dye_vat SET target_temp = 95.0, status = 'HOLDING', current_temp = 95.0,
+                   hold_minutes = 30, hold_remain_minutes = 22, active_order_no = 'BO-260927-001'
+ WHERE id = 1;
+UPDATE cloth_cart SET active_order_no = 'BO-260927-001' WHERE id = 1;

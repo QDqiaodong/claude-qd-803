@@ -16,21 +16,26 @@ import com.dyeing.mill.domain.FabricProfile;
 import com.dyeing.mill.domain.ProcessCurve;
 import com.dyeing.mill.dto.CurveNodeInput;
 import com.dyeing.mill.dto.CurvePayload;
+import com.dyeing.mill.event.BathOrderInvalidationListener;
 import com.dyeing.mill.repository.FabricProfileRepository;
 import com.dyeing.mill.repository.ProcessCurveRepository;
 
 /**
  * 工艺曲线业务：节点序列有序保存、各段升温速率计算与布种上限拦截。
+ * 节点每次保存 nodeRevision +1，并在事务提交后把引用旧节点的待确认开缸单标失效。
  */
 @Service
 public class CurveService {
 
     private final ProcessCurveRepository curveRepository;
     private final FabricProfileRepository fabricProfileRepository;
+    private final BathOrderInvalidationListener bathInvalidation;
 
-    public CurveService(ProcessCurveRepository curveRepository, FabricProfileRepository fabricProfileRepository) {
+    public CurveService(ProcessCurveRepository curveRepository, FabricProfileRepository fabricProfileRepository,
+                        BathOrderInvalidationListener bathInvalidation) {
         this.curveRepository = curveRepository;
         this.fabricProfileRepository = fabricProfileRepository;
+        this.bathInvalidation = bathInvalidation;
     }
 
     public List<ProcessCurve> list() {
@@ -57,8 +62,11 @@ public class CurveService {
         curve.setColorCode(payload.getColorCode());
         curve.setRecipeId(payload.getRecipeId());
         curve.setStartTemp(payload.getStartTemp() == null ? BigDecimal.valueOf(30) : payload.getStartTemp());
+        curve.setNodeRevision(1);
         applyNodes(curve, payload.getNodes());
-        return curveRepository.save(curve);
+        ProcessCurve saved = curveRepository.save(curve);
+        bathInvalidation.afterCurveCommit(saved.getId(), saved.getNodeRevision());
+        return saved;
     }
 
     /**
@@ -83,7 +91,11 @@ public class CurveService {
             curve.setStartTemp(payload.getStartTemp());
         }
         applyNodes(curve, payload.getNodes());
-        return curveRepository.save(curve);
+        // 节点内容版本号自增：哪怕改的是曲线头（布种/色号），引用方也必须重新核对
+        curve.setNodeRevision((curve.getNodeRevision() == null ? 1 : curve.getNodeRevision()) + 1);
+        ProcessCurve saved = curveRepository.save(curve);
+        bathInvalidation.afterCurveCommit(saved.getId(), saved.getNodeRevision());
+        return saved;
     }
 
     /**

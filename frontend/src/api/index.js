@@ -50,3 +50,13 @@ export const stockOverview = () => http.get('/inventory/overview')
 export const stockAlerts = () => http.get('/inventory/alerts')
 export const issueStock = (payload) => http.post('/inventory/issue', payload)
 export const listIssues = () => http.get('/inventory/issues')
+
+/* ============ 开缸执行单 ============ */
+export const listBathOrders = () => http.get('/bath-orders')
+export const getBathOrder = (id) => http.get(`/bath-orders/${id}`)
+export const bathPreflight = (cartId, recipeId, curveId) =>
+  http.get('/bath-orders/preflight', { params: { cartId, recipeId, curveId } })
+export const createBathOrder = (payload) => http.post('/bath-orders', payload)
+export const issueBathOrder = (id, payload = {}) => http.post(`/bath-orders/${id}/issue`, payload)
+export const cancelBathOrder = (id) => http.post(`/bath-orders/${id}/cancel`)
+export const bathOverview = () => http.get('/bath-orders/overview')

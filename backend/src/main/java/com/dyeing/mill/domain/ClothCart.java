@@ -62,6 +62,14 @@ public class ClothCart {
     @Column(name = "dye_end_time")
     private LocalDateTime dyeEndTime;
 
+    /** 本次排缸令牌：每次排缸都换，待确认开缸单据此判断排缸结果是否已变 */
+    @Column(name = "assign_token", length = 64)
+    private String assignToken;
+
+    /** 当前已下达的开缸执行单号（布车侧可追溯） */
+    @Column(name = "active_order_no", length = 40)
+    private String activeOrderNo;
+
     /** 返修次数 */
     @Column(name = "rework_times")
     private Integer reworkTimes;

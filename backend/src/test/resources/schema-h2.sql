@@ -1,0 +1,483 @@
+-- ============================================================
+-- 印染厂 · 染缸与染色配方管理  —— 建表 + 种子数据
+-- 主线：缸 → 配方 → 工艺曲线 → 布车流转（+ 染化料库存）
+-- 注意：application.yml 里 ddl-auto: none，表结构完全由本文件决定
+-- ============================================================
+
+SET NAMES utf8mb4;
+
+DROP TABLE IF EXISTS bath_snapshot_node;
+DROP TABLE IF EXISTS bath_snapshot_item;
+DROP TABLE IF EXISTS bath_order;
+DROP TABLE IF EXISTS issue_record;
+DROP TABLE IF EXISTS chemical_stock;
+DROP TABLE IF EXISTS cloth_cart;
+DROP TABLE IF EXISTS curve_node;
+DROP TABLE IF EXISTS process_curve;
+DROP TABLE IF EXISTS recipe_item;
+DROP TABLE IF EXISTS recipe;
+DROP TABLE IF EXISTS fabric_profile;
+DROP TABLE IF EXISTS dye_vat;
+
+-- ---------------- 布种工艺档案 ----------------
+CREATE TABLE fabric_profile (
+    id                BIGINT       NOT NULL AUTO_INCREMENT,
+    fabric_type       VARCHAR(40)  NOT NULL,
+    fabric_name       VARCHAR(64)  NOT NULL,
+    max_ramp_rate     DECIMAL(5,2) NOT NULL,
+    max_hold_temp     DECIMAL(5,1) NOT NULL,
+    min_liquor_ratio  DECIMAL(5,2) NOT NULL,
+    enabled           TINYINT      NOT NULL DEFAULT 1,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_fabric_type (fabric_type)
+);
+
+-- ---------------- 染缸台账 ----------------
+CREATE TABLE dye_vat (
+    id                  BIGINT        NOT NULL AUTO_INCREMENT,
+    vat_code            VARCHAR(32)   NOT NULL,
+    machine_type        VARCHAR(20)   NOT NULL,
+    capacity_kg         DECIMAL(10,2) NOT NULL,
+    liquor_ratio        DECIMAL(5,2)  NOT NULL,
+    status              VARCHAR(20)   NOT NULL,
+    current_temp        DECIMAL(5,1)  NOT NULL,
+    target_temp         DECIMAL(5,1)  NOT NULL,
+    hold_minutes        INT           NOT NULL DEFAULT 0,
+    hold_remain_minutes INT           NOT NULL DEFAULT 0,
+    workshop            VARCHAR(32)   NOT NULL,
+    remark              VARCHAR(200)  NULL,
+    active_order_no     VARCHAR(40)   NULL,
+    deleted             TINYINT       NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_vat_code (vat_code),
+    KEY idx_vat_status (status)
+);
+
+-- ---------------- 染色配方 ----------------
+CREATE TABLE recipe (
+    id           BIGINT        NOT NULL AUTO_INCREMENT,
+    recipe_code  VARCHAR(32)   NOT NULL,
+    color_code   VARCHAR(32)   NOT NULL,
+    color_name   VARCHAR(64)   NOT NULL,
+    customer     VARCHAR(64)   NOT NULL,
+    fabric_type  VARCHAR(40)   NOT NULL,
+    version_no   INT           NOT NULL DEFAULT 1,
+    color_hex    VARCHAR(9)    NOT NULL,
+    lab_l        DECIMAL(6,2)  NULL,
+    lab_a        DECIMAL(6,2)  NULL,
+    lab_b        DECIMAL(6,2)  NULL,
+    status       VARCHAR(20)   NOT NULL DEFAULT 'DRAFT',
+    total_owf    DECIMAL(7,3)  NOT NULL DEFAULT 0,
+    cost_per_kg  DECIMAL(10,2) NOT NULL DEFAULT 0,
+    revision     INT           NOT NULL DEFAULT 1,
+    create_time  DATETIME      NULL,
+    deleted      TINYINT       NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_recipe_code (recipe_code),
+    KEY idx_recipe_color (color_code)
+);
+
+-- ---------------- 配方明细（染料 / 助剂） ----------------
+CREATE TABLE recipe_item (
+    id          BIGINT        NOT NULL AUTO_INCREMENT,
+    recipe_id   BIGINT        NOT NULL,
+    seq_no      INT           NOT NULL,
+    item_type   VARCHAR(10)   NOT NULL,
+    dye_name    VARCHAR(64)   NOT NULL,
+    owf_percent DECIMAL(8,3)  NOT NULL,
+    unit_price  DECIMAL(10,2) NOT NULL,
+    color_hex   VARCHAR(9)    NULL,
+    deleted     TINYINT       NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    KEY idx_item_recipe (recipe_id, seq_no)
+);
+
+-- ---------------- 工艺曲线 ----------------
+CREATE TABLE process_curve (
+    id            BIGINT       NOT NULL AUTO_INCREMENT,
+    curve_code    VARCHAR(32)  NOT NULL,
+    curve_name    VARCHAR(64)  NOT NULL,
+    fabric_type   VARCHAR(40)  NOT NULL,
+    color_code    VARCHAR(32)  NULL,
+    recipe_id     BIGINT       NULL,
+    start_temp    DECIMAL(5,1) NOT NULL DEFAULT 30,
+    total_minutes INT          NOT NULL DEFAULT 0,
+    max_ramp_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
+    node_revision INT          NOT NULL DEFAULT 1,
+    deleted       TINYINT      NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_curve_code (curve_code)
+);
+
+-- ---------------- 工艺曲线节点序列 ----------------
+CREATE TABLE curve_node (
+    id           BIGINT       NOT NULL AUTO_INCREMENT,
+    curve_id     BIGINT       NOT NULL,
+    seq_no       INT          NOT NULL,
+    stage        VARCHAR(10)  NOT NULL,
+    target_temp  DECIMAL(5,1) NOT NULL,
+    duration_min INT          NOT NULL,
+    ramp_rate    DECIMAL(5,2) NOT NULL DEFAULT 0,
+    memo         VARCHAR(100) NULL,
+    PRIMARY KEY (id),
+    KEY idx_node_curve (curve_id, seq_no)
+);
+
+-- ---------------- 布车流转 ----------------
+CREATE TABLE cloth_cart (
+    id             BIGINT        NOT NULL AUTO_INCREMENT,
+    cart_code      VARCHAR(32)   NOT NULL,
+    fabric_type    VARCHAR(40)   NOT NULL,
+    meters         DECIMAL(10,1) NOT NULL,
+    color_code     VARCHAR(32)   NOT NULL,
+    color_name     VARCHAR(64)   NOT NULL,
+    customer       VARCHAR(64)   NOT NULL,
+    vat_id         BIGINT        NULL,
+    vat_code       VARCHAR(32)   NULL,
+    status         VARCHAR(20)   NOT NULL,
+    dye_start_time DATETIME      NULL,
+    dye_end_time   DATETIME      NULL,
+    assign_token   VARCHAR(64)   NULL,
+    active_order_no VARCHAR(40)  NULL,
+    rework_times   INT           NOT NULL DEFAULT 0,
+    deleted        TINYINT       NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_cart_code (cart_code),
+    KEY idx_cart_status (status),
+    KEY idx_cart_vat (vat_id)
+);
+
+-- ---------------- 染料与助剂库存 ----------------
+CREATE TABLE chemical_stock (
+    id          BIGINT        NOT NULL AUTO_INCREMENT,
+    chem_code   VARCHAR(32)   NOT NULL,
+    chem_name   VARCHAR(64)   NOT NULL,
+    category    VARCHAR(10)   NOT NULL,
+    unit        VARCHAR(10)   NOT NULL DEFAULT 'kg',
+    stock_kg    DECIMAL(10,2) NOT NULL,
+    safety_kg   DECIMAL(10,2) NOT NULL,
+    batch_no    VARCHAR(32)   NOT NULL,
+    expire_date DATE          NOT NULL,
+    unit_price  DECIMAL(10,2) NOT NULL,
+    supplier    VARCHAR(64)   NOT NULL,
+    deleted     TINYINT       NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_chem_code (chem_code)
+);
+
+-- ---------------- 领用记录 ----------------
+CREATE TABLE issue_record (
+    id          BIGINT        NOT NULL AUTO_INCREMENT,
+    stock_id    BIGINT        NOT NULL,
+    chem_code   VARCHAR(32)   NOT NULL,
+    chem_name   VARCHAR(64)   NOT NULL,
+    qty_kg      DECIMAL(10,2) NOT NULL,
+    operator    VARCHAR(32)   NOT NULL,
+    recipe_code VARCHAR(32)   NULL,
+    cart_code   VARCHAR(32)   NULL,
+    issue_time  DATETIME      NOT NULL,
+    deleted     TINYINT       NOT NULL DEFAULT 0,
+    PRIMARY KEY (id),
+    KEY idx_issue_stock (stock_id),
+    KEY idx_issue_time (issue_time)
+);
+
+-- ---------------- 开缸执行单 ----------------
+-- 串起：已排缸布车 + 已发布配方 + 匹配工艺曲线
+-- 生命周期：PENDING 待确认 -> ISSUED 已下达（保存不可变快照）；PENDING 可被标 INVALID 失效
+CREATE TABLE bath_order (
+    id                  BIGINT       NOT NULL AUTO_INCREMENT,
+    order_no            VARCHAR(40)  NOT NULL,
+    cart_id             BIGINT       NOT NULL,
+    cart_code           VARCHAR(32)  NOT NULL,
+    vat_id              BIGINT       NOT NULL,
+    vat_code            VARCHAR(32)  NOT NULL,
+    vat_machine_type    VARCHAR(20)  NOT NULL,
+    vat_capacity_kg     DECIMAL(10,2) NOT NULL,
+    fabric_type         VARCHAR(40)  NOT NULL,
+    color_code          VARCHAR(32)  NOT NULL,
+    color_name          VARCHAR(64)  NOT NULL,
+    meters              DECIMAL(10,1) NOT NULL,
+    fabric_weight_kg    DECIMAL(10,2) NOT NULL,
+    recipe_id           BIGINT       NOT NULL,
+    recipe_code         VARCHAR(32)  NOT NULL,
+    recipe_version_no   INT          NOT NULL,
+    recipe_revision     INT          NOT NULL,
+    curve_id            BIGINT       NOT NULL,
+    curve_code          VARCHAR(32)  NOT NULL,
+    curve_node_revision INT          NOT NULL,
+    assign_token        VARCHAR(64)  NULL,
+    target_temp         DECIMAL(5,1) NOT NULL,
+    hold_minutes        INT          NOT NULL,
+    total_minutes       INT          NOT NULL,
+    status              VARCHAR(20)  NOT NULL,
+    invalid_reason      VARCHAR(500) NULL,
+    issued_by           VARCHAR(32)  NULL,
+    issued_time         DATETIME     NULL,
+    created_by          VARCHAR(32)  NULL,
+    create_time         DATETIME     NOT NULL,
+    -- 同一布车同一排缸批次最多一张待确认单：失效行用带 id 的唯一哨兵值，不占唯一槽位
+    pending_cart_key    VARCHAR(128) GENERATED ALWAYS AS
+                        (CASE WHEN status = 'PENDING' THEN CONCAT(cart_id, '#', IFNULL(assign_token, '-'))
+                              WHEN status = 'INVALID' THEN CONCAT('X#', id) END),
+    -- 同一布车同一排缸批次最多一张已下达单：并发下第二张由数据库唯一键兜底
+    issued_cart_key     VARCHAR(128) GENERATED ALWAYS AS
+                        (CASE WHEN status = 'ISSUED' THEN CONCAT(cart_id, '#', IFNULL(assign_token, '-'))
+                              WHEN status = 'INVALID' THEN CONCAT('Y#', id) END),
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_order_no (order_no),
+    UNIQUE KEY uk_pending_cart (pending_cart_key),
+    UNIQUE KEY uk_issued_cart (issued_cart_key),
+    KEY idx_bath_status (status),
+    KEY idx_bath_cart (cart_id),
+    KEY idx_bath_vat (vat_id)
+);
+
+-- ---------------- 开缸执行单 · 配方快照（下达时冻结，永不受来源编辑影响） ----------------
+CREATE TABLE bath_snapshot_item (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    bath_order_id    BIGINT       NOT NULL,
+    seq_no           INT          NOT NULL,
+    item_type        VARCHAR(10)  NOT NULL,
+    dye_name         VARCHAR(64)  NOT NULL,
+    owf_percent      DECIMAL(8,3) NOT NULL,
+    unit_price       DECIMAL(10,2) NOT NULL,
+    color_hex        VARCHAR(9)   NULL,
+    PRIMARY KEY (id),
+    KEY idx_bath_item (bath_order_id, seq_no)
+);
+
+-- ---------------- 开缸执行单 · 曲线节点快照（下达时冻结） ----------------
+CREATE TABLE bath_snapshot_node (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    bath_order_id    BIGINT       NOT NULL,
+    seq_no           INT          NOT NULL,
+    stage            VARCHAR(10)  NOT NULL,
+    target_temp      DECIMAL(5,1) NOT NULL,
+    duration_min     INT          NOT NULL,
+    ramp_rate        DECIMAL(5,2) NOT NULL DEFAULT 0,
+    memo             VARCHAR(100) NULL,
+    PRIMARY KEY (id),
+    KEY idx_bath_node (bath_order_id, seq_no)
+);
+
+-- ============================================================
+-- 种子数据
+-- ============================================================
+
+-- 布种工艺档案（6 行）
+INSERT INTO fabric_profile (id, fabric_type, fabric_name, max_ramp_rate, max_hold_temp, min_liquor_ratio, enabled) VALUES
+ (1, 'SILK',     '真丝',        1.00,  95.0, 15.00, 1),
+ (2, 'NYLON',    '锦纶弹力',    1.50, 120.0, 12.00, 1),
+ (3, 'POLY',     '涤纶机织',    2.00, 135.0, 10.00, 1),
+ (4, 'BLEND',    '涤棉混纺',    2.20, 130.0, 10.00, 1),
+ (5, 'VISCOSE',  '人棉针织',    2.50, 110.0,  8.00, 1),
+ (6, 'COTTON',   '全棉针织',    3.00, 130.0,  8.00, 1);
+
+-- 染缸台账（12 行）
+INSERT INTO dye_vat (id, vat_code, machine_type, capacity_kg, liquor_ratio, status, current_temp, target_temp, hold_minutes, hold_remain_minutes, workshop, remark, active_order_no, deleted) VALUES
+ (1,  'V-01', 'OVERFLOW', 500.00,  8.00, 'HEATING',  96.0, 130.0, 30, 12, 'A区', '一号溢喷机，主力做全棉中温', NULL, 0),
+ (2,  'V-02', 'AIRFLOW',  400.00,  6.00, 'HOLDING', 130.0, 130.0, 45, 28, 'A区', '气流机，适合涤纶高温高压', NULL, 0),
+ (3,  'V-03', 'OVERFLOW', 600.00,  8.00, 'HEATING',  72.0, 100.0, 30, 30, 'A区', '大容量，锦纶酸性专用', NULL, 0),
+ (4,  'V-04', 'JIG',      300.00, 12.00, 'COOLING',  78.0,  45.0,  0,  0, 'B区', '卷染机，真丝低温慢升', NULL, 0),
+ (5,  'V-05', 'AIRFLOW',  450.00,  6.50, 'HOLDING', 110.0, 110.0, 40, 15, 'B区', '人流棉活性染色', NULL, 0),
+ (6,  'V-06', 'OVERFLOW', 500.00,  8.00, 'DRAINING', 46.0,  45.0,  0,  0, 'B区', '排液中，准备过清水', NULL, 0),
+ (7,  'V-07', 'JIG',      300.00, 10.00, 'WASHING',  38.0,  32.0,  0,  0, 'B区', '清洗中', NULL, 0),
+ (8,  'V-08', 'AIRFLOW',  400.00,  6.00, 'IDLE',     32.0,  32.0,  0,  0, 'C区', '空闲待排产', NULL, 0),
+ (9,  'V-09', 'OVERFLOW', 600.00,  8.00, 'IDLE',     32.0,  32.0,  0,  0, 'C区', '空闲待排产', NULL, 0),
+ (10, 'V-10', 'JIG',      300.00, 12.00, 'HOLDING',  95.0,  95.0, 30, 22, 'C区', '卷染中温保温', NULL, 0),
+ (11, 'V-11', 'AIRFLOW',  450.00,  6.50, 'HEATING',  58.0, 120.0, 35, 35, 'C区', '升温段，注意速率', NULL, 0),
+ (12, 'V-12', 'OVERFLOW', 800.00,  9.00, 'COOLING',  88.0,  60.0,  0,  0, 'A区', '最大缸，混纺大批量', NULL, 0);
+
+-- 染色配方（8 行）
+INSERT INTO recipe (id, recipe_code, color_code, color_name, customer, fabric_type, version_no, color_hex, lab_l, lab_a, lab_b, status, total_owf, cost_per_kg, create_time, deleted) VALUES
+ (1, 'R-2401', 'C-1901', '藏青',   '恒生纺织', 'COTTON',  1, '#1A2B6B', 28.40,  1.20, -32.60, 'RELEASED', 100.000, 82.31, '2026-08-11 09:20:00', 0),
+ (2, 'R-2402', 'C-1902', '酒红',   '雅戈尔',   'POLY',    2, '#8B1A1A', 35.10, 42.30,  18.70, 'RELEASED', 100.000, 113.68, '2026-08-12 10:05:00', 0),
+ (3, 'R-2403', 'C-1903', '墨绿',   '申洲针织', 'NYLON',   1, '#0F6E4F', 42.60, -18.40, 12.30, 'RELEASED', 100.000, 136.66, '2026-08-15 14:40:00', 0),
+ (4, 'R-2404', 'C-1904', '芥黄',   '鲁泰纺织', 'BLEND',   3, '#C9A227', 72.30,  8.60,  56.40, 'RELEASED', 100.000, 108.62, '2026-08-18 11:15:00', 0),
+ (5, 'R-2405', 'C-1905', '雪青',   '华孚色纺', 'VISCOSE', 1, '#6B4A8F', 48.20, 22.10, -26.80, 'DRAFT',    100.000, 162.06, '2026-08-20 16:30:00', 0),
+ (6, 'R-2406', 'C-1906', '米白',   '恒生纺织', 'SILK',    1, '#D8D3C4', 88.40,  0.60,   6.20, 'RELEASED', 100.000, 79.44, '2026-08-22 09:00:00', 0),
+ (7, 'R-2407', 'C-1907', '元黑',   '申洲针织', 'POLY',    2, '#1F1F1F', 16.80,  0.40,  -1.20, 'RELEASED', 100.000, 100.30, '2026-08-25 15:20:00', 0),
+ (8, 'R-2408', 'C-1908', '湖蓝',   '雅戈尔',   'COTTON',  1, '#2E8BC0', 56.20, -12.60, -32.10, 'DRAFT',    100.000, 133.44, '2026-08-28 08:45:00', 0);
+
+-- 配方明细（染料 owf 合计 100%，助剂单列不计入）
+INSERT INTO recipe_item (id, recipe_id, seq_no, item_type, dye_name, owf_percent, unit_price, color_hex, deleted) VALUES
+ (1,  1, 1, 'DYE', '活性藏青 B-133',   58.000,  86.00, '#1A2B6B', 0),
+ (2,  1, 2, 'DYE', '活性黑 KN-B',      34.000,  72.50, '#10131C', 0),
+ (3,  1, 3, 'DYE', '活性红 3BS',        8.000,  68.00, '#B03030', 0),
+ (4,  1, 4, 'AUX', '匀染剂 AL-200',     1.500,  24.00, '#8E7CC3', 0),
+ (5,  1, 5, 'AUX', '元明粉(盐)',       45.000,   1.20, '#D9D9D9', 0),
+ (6,  1, 6, 'AUX', '纯碱',             20.000,   2.60, '#EFEFEF', 0),
+ (7,  2, 1, 'DYE', '分散红玉 S-5BL',   46.000, 128.00, '#8B1A1A', 0),
+ (8,  2, 2, 'DYE', '分散黄棕 S-2RFL',  32.000,  96.00, '#B5651D', 0),
+ (9,  2, 3, 'DYE', '分散蓝 2BLN',      22.000, 104.00, '#27408B', 0),
+ (10, 2, 4, 'AUX', '匀染剂 1227',       1.200,  32.00, '#8E7CC3', 0),
+ (11, 2, 5, 'AUX', '冰醋酸',            0.800,   6.50, '#EAF2F8', 0),
+ (12, 2, 6, 'AUX', '固色剂 SF-30',      2.000,  46.00, '#C7B8E3', 0),
+ (13, 3, 1, 'DYE', '酸性绿 25',        52.000, 152.00, '#0F6E4F', 0),
+ (14, 3, 2, 'DYE', '酸性黄 2G',        30.000, 118.00, '#C9B400', 0),
+ (15, 3, 3, 'DYE', '酸性蓝 RAW',       18.000, 136.00, '#1B4F72', 0),
+ (16, 3, 4, 'AUX', '匀染剂 WE-2',       1.000,  38.00, '#8E7CC3', 0),
+ (17, 3, 5, 'AUX', '硫酸铵',            3.000,   4.20, '#E8E8E8', 0),
+ (18, 4, 1, 'DYE', '分散黄 SE-6G',     44.000, 112.00, '#C9A227', 0),
+ (19, 4, 2, 'DYE', '分散橙 S-4RL',     26.000,  98.00, '#D2691E', 0),
+ (20, 4, 3, 'DYE', '分散红 FB',        18.000, 124.00, '#C0392B', 0),
+ (21, 4, 4, 'DYE', '分散蓝 B-56',      12.000, 108.00, '#2874A6', 0),
+ (22, 4, 5, 'AUX', '匀染剂 1227',       1.000,  32.00, '#8E7CC3', 0),
+ (23, 4, 6, 'AUX', '固色剂 SF-30',      1.500,  46.00, '#C7B8E3', 0),
+ (24, 4, 7, 'AUX', '碱剂',              5.000,   3.80, '#F1F1F1', 0),
+ (25, 5, 1, 'DYE', '阳离子紫 3R',      40.000, 168.00, '#6B4A8F', 0),
+ (26, 5, 2, 'DYE', '阳离子蓝 X-GRRL',  36.000, 156.00, '#3A5BA0', 0),
+ (27, 5, 3, 'DYE', '阳离子红 X-GRL',   24.000, 162.00, '#A93226', 0),
+ (28, 5, 4, 'AUX', '匀染剂 PAN',        1.200,  42.00, '#8E7CC3', 0),
+ (29, 5, 5, 'AUX', '元明粉(盐)',       30.000,   1.20, '#D9D9D9', 0),
+ (30, 6, 1, 'DYE', '增白剂 VBL',       88.000,  88.00, '#F4F1E6', 0),
+ (31, 6, 2, 'DYE', '分散紫 HFRL',       0.600, 210.00, '#7D3C98', 0),
+ (32, 6, 3, 'DYE', '分散蓝 2BLN',      11.400, 104.00, '#27408B', 0),
+ (33, 6, 4, 'AUX', '双氧水',            6.000,   3.20, '#EAF2F8', 0),
+ (34, 6, 5, 'AUX', '精练剂',            2.000,  12.00, '#D5D8DC', 0),
+ (35, 7, 1, 'DYE', '分散黑 S-3BL',     62.000,  92.00, '#1F1F1F', 0),
+ (36, 7, 2, 'DYE', '分散深蓝 HGL',     26.000, 118.00, '#154360', 0),
+ (37, 7, 3, 'DYE', '分散红玉 S-5BL',   12.000, 128.00, '#8B1A1A', 0),
+ (38, 7, 4, 'AUX', '匀染剂 1227',       1.500,  32.00, '#8E7CC3', 0),
+ (39, 7, 5, 'AUX', '固色剂 SF-30',      2.500,  46.00, '#C7B8E3', 0),
+ (40, 7, 6, 'AUX', '冰醋酸',            1.000,   6.50, '#EAF2F8', 0),
+ (41, 8, 1, 'DYE', '活性翠蓝 KN-G',    56.000, 148.00, '#2E8BC0', 0),
+ (42, 8, 2, 'DYE', '活性蓝 KN-R',      30.000, 132.00, '#1A5276', 0),
+ (43, 8, 3, 'DYE', '活性嫩黄 4GL',     14.000,  96.00, '#F1C40F', 0),
+ (44, 8, 4, 'AUX', '元明粉(盐)',       50.000,   1.20, '#D9D9D9', 0),
+ (45, 8, 5, 'AUX', '纯碱',             18.000,   2.60, '#EFEFEF', 0),
+ (46, 8, 6, 'AUX', '匀染剂 AL-200',     1.200,  24.00, '#8E7CC3', 0);
+
+-- 工艺曲线（6 条）
+INSERT INTO process_curve (id, curve_code, curve_name, fabric_type, color_code, recipe_id, start_temp, total_minutes, max_ramp_rate, deleted) VALUES
+ (1, 'PC-001', '全棉活性中温染色曲线', 'COTTON',  'C-1901', 1, 30.0, 115, 1.50, 0),
+ (2, 'PC-002', '涤纶分散高温高压曲线', 'POLY',    'C-1902', 2, 30.0, 155, 1.60, 0),
+ (3, 'PC-003', '锦纶酸性染色曲线',     'NYLON',   'C-1903', 3, 30.0, 115, 1.50, 0),
+ (4, 'PC-004', '涤棉混纺一浴法曲线',   'BLEND',   'C-1904', 4, 30.0, 120, 2.50, 0),
+ (5, 'PC-005', '人棉活性低温曲线',     'VISCOSE', 'C-1905', 5, 30.0, 125, 1.40, 0),
+ (6, 'PC-006', '真丝低温慢升曲线',     'SILK',    'C-1906', 6, 30.0, 135, 1.00, 0);
+
+-- 工艺曲线节点（有序序列：升温 → 保温 → 降温）
+INSERT INTO curve_node (id, curve_id, seq_no, stage, target_temp, duration_min, ramp_rate, memo) VALUES
+ (1,  1, 1, 'RAMP',  60.0, 20,  1.50, '入染后慢升，防色花'),
+ (2,  1, 2, 'HOLD',  60.0, 15,  0.00, '加盐促染'),
+ (3,  1, 3, 'RAMP',  95.0, 25,  1.40, '升至固色温度'),
+ (4,  1, 4, 'HOLD',  95.0, 30,  0.00, '加碱固色'),
+ (5,  1, 5, 'COOL',  60.0, 15, -2.33, '缓慢降温'),
+ (6,  1, 6, 'COOL',  45.0, 10, -1.50, '降至排液温度'),
+ (7,  2, 1, 'RAMP',  90.0, 40,  1.50, '升温至玻璃化温度'),
+ (8,  2, 2, 'HOLD',  90.0, 10,  0.00, '匀染'),
+ (9,  2, 3, 'RAMP', 130.0, 25,  1.60, '升至高温高压'),
+ (10, 2, 4, 'HOLD', 130.0, 45,  0.00, '保温上染'),
+ (11, 2, 5, 'COOL',  80.0, 20, -2.50, '降温防皱'),
+ (12, 2, 6, 'COOL',  45.0, 15, -2.33, '降至排液温度'),
+ (13, 3, 1, 'RAMP',  70.0, 30,  1.33, '锦纶低温起步'),
+ (14, 3, 2, 'HOLD',  70.0, 15,  0.00, '酸性染料匀染'),
+ (15, 3, 3, 'RAMP', 100.0, 20,  1.50, '升至上限温度'),
+ (16, 3, 4, 'HOLD', 100.0, 30,  0.00, '保温上染'),
+ (17, 3, 5, 'COOL',  50.0, 20, -2.50, '降温'),
+ (18, 4, 1, 'RAMP',  80.0, 25,  2.00, '一浴法起步'),
+ (19, 4, 2, 'RAMP', 130.0, 25,  2.00, '一浴法升至高温（2.00℃/min，未超布种上限 2.20）'),
+ (20, 4, 3, 'HOLD', 130.0, 40,  0.00, '保温上染'),
+ (21, 4, 4, 'COOL',  60.0, 25, -2.80, '降温'),
+ (22, 4, 5, 'COOL',  45.0, 10, -1.50, '降至排液温度'),
+ (23, 5, 1, 'RAMP',  65.0, 25,  1.40, '人棉慢升'),
+ (24, 5, 2, 'HOLD',  65.0, 20,  0.00, '加盐'),
+ (25, 5, 3, 'RAMP', 100.0, 30,  1.17, '升至固色温度'),
+ (26, 5, 4, 'HOLD', 100.0, 25,  0.00, '固色'),
+ (27, 5, 5, 'COOL',  45.0, 25, -2.20, '降温'),
+ (28, 6, 1, 'RAMP',  60.0, 40,  0.75, '真丝极慢升温'),
+ (29, 6, 2, 'HOLD',  60.0, 20,  0.00, '匀染'),
+ (30, 6, 3, 'RAMP',  85.0, 25,  1.00, '升至上限温度'),
+ (31, 6, 4, 'HOLD',  85.0, 30,  0.00, '保温'),
+ (32, 6, 5, 'COOL',  45.0, 20, -2.00, '降温');
+
+-- 布车流转（15 行，含 1 辆报废车，会被 @SQLRestriction 过滤掉）
+INSERT INTO cloth_cart (id, cart_code, fabric_type, meters, color_code, color_name, customer, vat_id, vat_code, status, dye_start_time, dye_end_time, rework_times, deleted) VALUES
+ (1,  'C-2401', 'COTTON',  1250.0, 'C-1901', '藏青', '申洲针织', 1,  'V-01', 'DYEING',   '2026-09-27 08:00:00', '2026-09-27 11:30:00', 0, 0),
+ (2,  'C-2402', 'POLY',     860.0, 'C-1902', '酒红', '雅戈尔',   2,  'V-02', 'DYEING',   '2026-09-27 08:30:00', '2026-09-27 12:00:00', 0, 0),
+ (3,  'C-2403', 'NYLON',   1520.0, 'C-1903', '墨绿', '申洲针织', 3,  'V-03', 'DYEING',   '2026-09-27 09:00:00', '2026-09-27 12:30:00', 0, 0),
+ (4,  'C-2404', 'BLEND',    980.0, 'C-1904', '芥黄', '鲁泰纺织', 4,  'V-04', 'DYEING',   '2026-09-27 09:30:00', '2026-09-27 13:00:00', 0, 0),
+ (5,  'C-2405', 'VISCOSE', 1100.0, 'C-1905', '雪青', '华孚色纺', 5,  'V-05', 'DYEING',   '2026-09-27 10:00:00', '2026-09-27 13:30:00', 0, 0),
+ (6,  'C-2406', 'COTTON',   760.0, 'C-1908', '湖蓝', '雅戈尔',   NULL, NULL, 'PENDING',  NULL, NULL, 0, 0),
+ (7,  'C-2407', 'POLY',    1340.0, 'C-1907', '元黑', '申洲针织', NULL, NULL, 'PENDING',  NULL, NULL, 0, 0),
+ (8,  'C-2408', 'SILK',     420.0, 'C-1906', '米白', '恒生纺织', NULL, NULL, 'PENDING',  NULL, NULL, 0, 0),
+ (9,  'C-2409', 'COTTON',  1580.0, 'C-1901', '藏青', '恒生纺织', NULL, NULL, 'PENDING',  NULL, NULL, 0, 0),
+ (10, 'C-2410', 'COTTON',  1050.0, 'C-1908', '湖蓝', '雅戈尔',   6,  'V-06', 'DONE',     '2026-09-26 08:00:00', '2026-09-26 11:00:00', 0, 0),
+ (11, 'C-2411', 'POLY',    1210.0, 'C-1902', '酒红', '雅戈尔',   7,  'V-07', 'DONE',     '2026-09-26 09:00:00', '2026-09-26 12:30:00', 0, 0),
+ (12, 'C-2412', 'NYLON',    890.0, 'C-1903', '墨绿', '申洲针织', 8,  'V-08', 'DONE',     '2026-09-26 13:00:00', '2026-09-26 16:30:00', 0, 0),
+ (13, 'C-2413', 'VISCOSE',  640.0, 'C-1905', '雪青', '华孚色纺', 9,  'V-09', 'DONE',     '2026-09-26 14:00:00', '2026-09-26 17:00:00', 0, 0),
+ (14, 'C-2414', 'SILK',     380.0, 'C-1906', '米白', '恒生纺织', NULL, NULL, 'REWORK',   NULL, NULL, 1, 0),
+ (15, 'C-2415', 'COTTON',   900.0, 'C-1907', '元黑', '申洲针织', NULL, NULL, 'SCRAPPED', NULL, NULL, 2, 0);
+
+-- 染料与助剂库存（13 行）
+INSERT INTO chemical_stock (id, chem_code, chem_name, category, unit, stock_kg, safety_kg, batch_no, expire_date, unit_price, supplier, deleted) VALUES
+ (1,  'DC-1001', '活性藏青 B-133',  'DYE', 'kg',  320.00, 120.00, 'B-2601-01', '2027-03-31',  86.00, '浙江龙盛', 0),
+ (2,  'DC-1002', '活性黑 KN-B',     'DYE', 'kg',   86.50, 100.00, 'B-2602-04', '2027-01-31',  72.50, '浙江龙盛', 0),
+ (3,  'DC-1003', '活性红 3BS',      'DYE', 'kg',  240.00,  80.00, 'B-2601-09', '2027-05-30',  68.00, '闰土股份', 0),
+ (4,  'DC-1004', '分散红玉 S-5BL',  'DYE', 'kg',  410.00, 150.00, 'B-2512-11', '2026-12-31', 128.00, '浙江龙盛', 0),
+ (5,  'DC-1005', '分散黄棕 S-2RFL', 'DYE', 'kg',   52.00,  90.00, 'B-2603-02', '2027-06-30',  96.00, '闰土股份', 0),
+ (6,  'DC-1006', '分散蓝 2BLN',     'DYE', 'kg',  180.00,  90.00, 'B-2601-06', '2027-04-30', 104.00, '安诺其',   0),
+ (7,  'DC-1007', '酸性绿 25',       'DYE', 'kg',  145.00,  60.00, 'B-2602-08', '2027-02-28', 152.00, '安诺其',   0),
+ (8,  'DC-1008', '阳离子紫 3R',     'DYE', 'kg',   96.00,  60.00, 'B-2601-12', '2027-03-15', 168.00, '传化智联', 0),
+ (9,  'AX-2001', '匀染剂 AL-200',   'AUX', 'kg',  640.00, 200.00, 'B-2601-03', '2027-08-31',  24.00, '传化智联', 0),
+ (10, 'AX-2002', '元明粉(盐)',      'AUX', 'kg', 3200.00, 800.00, 'B-2602-01', '2028-02-28',   1.20, '中盐化工', 0),
+ (11, 'AX-2003', '纯碱',            'AUX', 'kg', 1150.00, 400.00, 'B-2601-07', '2028-01-31',   2.60, '三友化工', 0),
+ (12, 'AX-2004', '固色剂 SF-30',    'AUX', 'kg',   74.00, 120.00, 'B-2512-05', '2026-11-30',  46.00, '传化智联', 0),
+ (13, 'AX-2005', '冰醋酸',          'AUX', 'kg',  480.00, 150.00, 'B-2602-10', '2027-07-31',   6.50, '华鲁恒升', 0);
+
+-- 领用记录（18 行）
+INSERT INTO issue_record (id, stock_id, chem_code, chem_name, qty_kg, operator, recipe_code, cart_code, issue_time, deleted) VALUES
+ (1,  1,  'DC-1001', '活性藏青 B-133',  62.50, '王建国', 'R-2401', 'C-2401', '2026-09-27 07:40:00', 0),
+ (2,  5,  'DC-1005', '分散黄棕 S-2RFL', 18.40, '李红梅', 'R-2402', 'C-2402', '2026-09-27 08:10:00', 0),
+ (3,  4,  'DC-1004', '分散红玉 S-5BL',  27.80, '李红梅', 'R-2402', 'C-2402', '2026-09-27 08:12:00', 0),
+ (4,  7,  'DC-1007', '酸性绿 25',       41.20, '张伟',   'R-2403', 'C-2403', '2026-09-27 08:45:00', 0),
+ (5,  6,  'DC-1006', '分散蓝 2BLN',     14.60, '张伟',   'R-2403', 'C-2403', '2026-09-27 08:47:00', 0),
+ (6,  8,  'DC-1008', '阳离子紫 3R',     22.10, '陈晓芳', 'R-2405', 'C-2405', '2026-09-27 09:35:00', 0),
+ (7,  9,  'AX-2001', '匀染剂 AL-200',    8.00, '王建国', 'R-2401', 'C-2401', '2026-09-27 07:45:00', 0),
+ (8,  10, 'AX-2002', '元明粉(盐)',     180.00, '王建国', 'R-2401', 'C-2401', '2026-09-27 07:50:00', 0),
+ (9,  11, 'AX-2003', '纯碱',            75.00, '王建国', 'R-2401', 'C-2401', '2026-09-27 09:55:00', 0),
+ (10, 2,  'DC-1002', '活性黑 KN-B',     24.30, '刘志强', 'R-2407', 'C-2407', '2026-09-26 15:20:00', 0),
+ (11, 1,  'DC-1001', '活性藏青 B-133',  55.00, '刘志强', 'R-2401', 'C-2409', '2026-09-26 16:05:00', 0),
+ (12, 12, 'AX-2004', '固色剂 SF-30',    12.50, '李红梅', 'R-2402', 'C-2411', '2026-09-26 09:20:00', 0),
+ (13, 13, 'AX-2005', '冰醋酸',           9.80, '李红梅', 'R-2402', 'C-2411', '2026-09-26 09:22:00', 0),
+ (14, 3,  'DC-1003', '活性红 3BS',       6.40, '陈晓芳', 'R-2401', 'C-2410', '2026-09-26 08:05:00', 0),
+ (15, 4,  'DC-1004', '分散红玉 S-5BL',  33.60, '张伟',   'R-2407', 'C-2411', '2026-09-26 09:30:00', 0),
+ (16, 9,  'AX-2001', '匀染剂 AL-200',    6.50, '张伟',   'R-2403', 'C-2412', '2026-09-26 13:10:00', 0),
+ (17, 10, 'AX-2002', '元明粉(盐)',     150.00, '陈晓芳', 'R-2405', 'C-2413', '2026-09-26 14:05:00', 0),
+ (18, 7,  'DC-1007', '酸性绿 25',       19.70, '刘志强', 'R-2403', 'C-2412', '2026-09-26 13:15:00', 0);
+
+-- 开缸执行单（1 张已下达示例：布车 C-2401 / 缸 V-01 / 配方 R-2401 / 曲线 PC-001）
+INSERT INTO bath_order (id, order_no, cart_id, cart_code, vat_id, vat_code, vat_machine_type, vat_capacity_kg,
+    fabric_type, color_code, color_name, meters, fabric_weight_kg,
+    recipe_id, recipe_code, recipe_version_no, recipe_revision,
+    curve_id, curve_code, curve_node_revision, assign_token,
+    target_temp, hold_minutes, total_minutes, status, invalid_reason, issued_by, issued_time, created_by, create_time)
+VALUES (1, 'BO-260927-001', 1, 'C-2401', 1, 'V-01', 'OVERFLOW', 500.00,
+    'COTTON', 'C-1901', '藏青', 1250.0, 225.00,
+    1, 'R-2401', 1, 1,
+    1, 'PC-001', 1, NULL,
+    95.0, 30, 115, 'ISSUED', NULL, '王建国', '2026-09-27 07:55:00', '王建国', '2026-09-27 07:30:00');
+
+INSERT INTO bath_snapshot_item (id, bath_order_id, seq_no, item_type, dye_name, owf_percent, unit_price, color_hex) VALUES
+ (1, 1, 1, 'DYE', '活性藏青 B-133', 58.000,  86.00, '#1A2B6B'),
+ (2, 1, 2, 'DYE', '活性黑 KN-B',    34.000,  72.50, '#10131C'),
+ (3, 1, 3, 'DYE', '活性红 3BS',      8.000,  68.00, '#B03030'),
+ (4, 1, 4, 'AUX', '匀染剂 AL-200',   1.500,  24.00, '#8E7CC3'),
+ (5, 1, 5, 'AUX', '元明粉(盐)',     45.000,   1.20, '#D9D9D9'),
+ (6, 1, 6, 'AUX', '纯碱',           20.000,   2.60, '#EFEFEF');
+
+INSERT INTO bath_snapshot_node (id, bath_order_id, seq_no, stage, target_temp, duration_min, ramp_rate, memo) VALUES
+ (1, 1, 1, 'RAMP', 60.0, 20,  1.50, '入染后慢升，防色花'),
+ (2, 1, 2, 'HOLD', 60.0, 15,  0.00, '加盐促染'),
+ (3, 1, 3, 'RAMP', 95.0, 25,  1.40, '升至固色温度'),
+ (4, 1, 4, 'HOLD', 95.0, 30,  0.00, '加碱固色'),
+ (5, 1, 5, 'COOL', 60.0, 15, -2.33, '缓慢降温'),
+ (6, 1, 6, 'COOL', 45.0, 10, -1.50, '降至排液温度');
+
+-- 对齐示例单的追溯字段：V-01 当前按 95℃/30min 保温执行，布车 C-2401 挂在该单上
+UPDATE dye_vat SET target_temp = 95.0, status = 'HOLDING', current_temp = 95.0,
+                   hold_minutes = 30, hold_remain_minutes = 22, active_order_no = 'BO-260927-001'
+ WHERE id = 1;
+UPDATE cloth_cart SET active_order_no = 'BO-260927-001' WHERE id = 1;

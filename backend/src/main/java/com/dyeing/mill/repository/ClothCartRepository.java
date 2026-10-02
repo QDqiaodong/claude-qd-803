@@ -3,7 +3,10 @@ package com.dyeing.mill.repository;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import jakarta.persistence.LockModeType;
+
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -12,6 +15,11 @@ import com.dyeing.mill.dto.ColorStatDTO;
 import com.dyeing.mill.dto.CustomerMeterDTO;
 
 public interface ClothCartRepository extends JpaRepository<ClothCart, Long> {
+
+    /** 开缸下达时对布车行加悲观锁，锁住同一排缸批次的并发下达 */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select c from ClothCart c where c.id = :id")
+    java.util.Optional<ClothCart> findByIdForUpdate(@Param("id") Long id);
 
     /**
      * 手写 JPQL ①：按色号统计缸次（缸次数 + 总米数）。

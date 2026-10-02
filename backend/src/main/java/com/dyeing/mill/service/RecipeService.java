@@ -16,11 +16,13 @@ import com.dyeing.mill.domain.RecipeItem;
 import com.dyeing.mill.dto.ColorStatDTO;
 import com.dyeing.mill.dto.RecipeItemInput;
 import com.dyeing.mill.dto.RecipePayload;
+import com.dyeing.mill.event.BathOrderInvalidationListener;
 import com.dyeing.mill.repository.ClothCartRepository;
 import com.dyeing.mill.repository.RecipeRepository;
 
 /**
  * 染色配方业务：明细 owf 合计 100% 校验、成本核算、版本演进。
+ * 内容每次保存 revision +1，并在事务提交后把引用旧版本的待确认开缸单标失效。
  */
 @Service
 public class RecipeService {
@@ -30,10 +32,13 @@ public class RecipeService {
 
     private final RecipeRepository recipeRepository;
     private final ClothCartRepository cartRepository;
+    private final BathOrderInvalidationListener bathInvalidation;
 
-    public RecipeService(RecipeRepository recipeRepository, ClothCartRepository cartRepository) {
+    public RecipeService(RecipeRepository recipeRepository, ClothCartRepository cartRepository,
+                         BathOrderInvalidationListener bathInvalidation) {
         this.recipeRepository = recipeRepository;
         this.cartRepository = cartRepository;
+        this.bathInvalidation = bathInvalidation;
     }
 
     public List<Recipe> list() {
@@ -54,8 +59,11 @@ public class RecipeService {
         }
         Recipe recipe = new Recipe();
         applyPayload(recipe, payload);
+        recipe.setRevision(1);
         recipe.setCreateTime(LocalDateTime.now());
-        return recipeRepository.save(recipe);
+        Recipe saved = recipeRepository.save(recipe);
+        bathInvalidation.afterRecipeCommit(saved.getId(), saved.getRevision());
+        return saved;
     }
 
     /**
@@ -65,7 +73,12 @@ public class RecipeService {
     public Recipe update(Long id, RecipePayload payload) {
         Recipe recipe = detail(id);
         applyPayload(recipe, payload);
-        return recipeRepository.save(recipe);
+        Recipe saved = recipeRepository.save(recipe);
+        // 内容版本号自增（无论草稿还是已发布，保存即内容可能已变）
+        saved.setRevision((saved.getRevision() == null ? 1 : saved.getRevision()) + 1);
+        saved = recipeRepository.save(saved);
+        bathInvalidation.afterRecipeCommit(saved.getId(), saved.getRevision());
+        return saved;
     }
 
     /**
@@ -86,6 +99,7 @@ public class RecipeService {
         copy.setLabA(source.getLabA());
         copy.setLabB(source.getLabB());
         copy.setStatus("DRAFT");
+        copy.setRevision(1);
         copy.setCreateTime(LocalDateTime.now());
         copy.setTotalOwf(source.getTotalOwf());
         copy.setCostPerKg(source.getCostPerKg());
@@ -110,7 +124,9 @@ public class RecipeService {
     public void delete(Long id) {
         Recipe recipe = detail(id);
         recipe.setDeleted(1);
-        recipeRepository.save(recipe);
+        recipe.setRevision((recipe.getRevision() == null ? 1 : recipe.getRevision()) + 1);
+        Recipe saved = recipeRepository.save(recipe);
+        bathInvalidation.afterRecipeCommit(saved.getId(), saved.getRevision());
     }
 
     /**

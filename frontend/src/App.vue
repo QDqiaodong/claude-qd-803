@@ -58,6 +58,7 @@ const menuOpen = ref(false)
 
 const ICONS = {
   vat: ['M5 6h14', 'M6 6v11a3 3 0 003 3h6a3 3 0 003-3V6', 'M5 11h14', 'M9 15h6'],
+  bath: ['M4 10h16', 'M5 10v8a2 2 0 002 2h10a2 2 0 002-2v-8', 'M8 10V6a4 4 0 018 0v4', 'M8 14h8'],
   recipe: ['M4 5h16v14H4z', 'M8 9h8', 'M8 13h8', 'M8 17h5'],
   curve: ['M3 20h18', 'M3 20V4', 'M5 17l4-8 3 5 5-10'],
   cart: ['M5 7h14v11H5z', 'M8 7V4h8v3', 'M5 12h14'],

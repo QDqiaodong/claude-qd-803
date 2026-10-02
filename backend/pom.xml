@@ -56,4 +56,28 @@
             </plugin>
         </plugins>
     </build>
+
+    <!--
+      验收测试（H2 内存库）只在显式开启 acceptance profile 时编译运行：
+      mvn test -Pacceptance
+      生产镜像 mvn package -DskipTests 不引入 H2 等测试依赖，依赖集与原项目一致。
+    -->
+    <profiles>
+        <profile>
+            <id>acceptance</id>
+            <dependencies>
+                <dependency>
+                    <groupId>com.h2database</groupId>
+                    <artifactId>h2</artifactId>
+                    <version>2.2.224</version>
+                    <scope>test</scope>
+                </dependency>
+                <dependency>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-test</artifactId>
+                    <scope>test</scope>
+                </dependency>
+            </dependencies>
+        </profile>
+    </profiles>
 </project>

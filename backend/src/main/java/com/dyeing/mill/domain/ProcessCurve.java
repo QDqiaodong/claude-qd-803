@@ -58,6 +58,10 @@ public class ProcessCurve {
     @Column(name = "max_ramp_rate", precision = 5, scale = 2)
     private BigDecimal maxRampRate;
 
+    /** 节点版本号：节点每次保存 +1，待确认开缸单据此判断曲线是否已变 */
+    @Column(name = "node_revision")
+    private Integer nodeRevision = 1;
+
     @OneToMany(mappedBy = "curve", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     @OrderBy("seqNo ASC")
     private List<CurveNode> nodes = new ArrayList<>();

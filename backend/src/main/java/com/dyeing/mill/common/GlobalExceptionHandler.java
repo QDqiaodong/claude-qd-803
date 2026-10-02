@@ -3,6 +3,7 @@ package com.dyeing.mill.common;
 import java.util.stream.Collectors;
 
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -51,11 +52,25 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 兜底：500
+     * 悲观锁获取失败 / 死锁（并发下达同一布车的落败方）：明确告诉用户谁先生效了
+     */
+    @ExceptionHandler(CannotAcquireLockException.class)
+    public ResponseEntity<ApiResponse<Void>> handleLock(CannotAcquireLockException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.fail("该布车正被另一笔下达占用，本次未成功，请刷新后查看已生效的开缸执行单"));
+    }
+
+    /**
+     * 兜底：500（MySQL 死锁 1213 包在各种异常里，这里识别后给业务话术）
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleOther(Exception e) {
         String detail = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+        if (detail.contains("Deadlock") || detail.contains("1213")
+                || detail.contains("Lock wait timeout") || detail.contains("1205")) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(ApiResponse.fail("并发冲突：该布车的开缸执行单刚被另一人处理，本次未生效，请刷新后查看"));
+        }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ApiResponse.fail("服务异常：" + detail));
     }
 }

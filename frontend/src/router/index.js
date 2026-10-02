@@ -4,13 +4,15 @@ import RecipeLab from '../views/RecipeLab.vue'
 import CurveEditor from '../views/CurveEditor.vue'
 import CartKanban from '../views/CartKanban.vue'
 import Inventory from '../views/Inventory.vue'
+import BathOrders from '../views/BathOrders.vue'
 
 /**
- * 五个业务模块。九宫格里 9 个格子共用这 5 个页面，
- * 其中 4 个格子是带预设参数的快捷入口（同一页面不同落点）。
+ * 业务模块入口。九宫格里多个格子可共用同一页面，
+ * 其中部分格子是带预设参数的快捷入口（同一页面不同落点）。
  */
 export const routes = [
   { path: '/vats', name: '染缸缸位', desc: '温度环阵列 · 控温面板', icon: 'vat', component: VatBoard, query: {} },
+  { path: '/baths', name: '开缸执行单', desc: '布车+配方+曲线 · 确认下达', icon: 'bath', component: BathOrders, query: {} },
   { path: '/recipes', name: '染色配方', desc: '色卡条 · 染料阶梯表', icon: 'recipe', component: RecipeLab, query: {} },
   { path: '/curves', name: '工艺曲线', desc: 'SVG 节点可拖动编辑器', icon: 'curve', component: CurveEditor, query: {} },
   { path: '/carts', name: '布车流转', desc: '三列看板 · 原生拖拽', icon: 'cart', component: CartKanban, query: {} },
@@ -18,7 +20,7 @@ export const routes = [
   { path: '/vats', name: '在制缸位', desc: '只看升温/保温中的缸', icon: 'running', component: VatBoard, query: { view: 'running' } },
   { path: '/recipes', name: '色号缸次', desc: '按色号统计缸次与米数', icon: 'stat', component: RecipeLab, query: { view: 'stat' } },
   { path: '/inventory', name: '染料库存', desc: '只看染料（DYE）', icon: 'dye', component: Inventory, query: { tab: 'DYE' } },
-  { path: '/inventory', name: '库存预警', desc: '低于安全库存的染化料', icon: 'alert', component: Inventory, query: { tab: 'alerts' } }
+  { path: '/baths', name: '待确认开缸', desc: '直达待确认执行单列表', icon: 'alert', component: BathOrders, query: { status: 'PENDING' } }
 ]
 
 function parse(hash) {

@@ -12,7 +12,7 @@ COPY pom.xml settings.xml ./
 RUN mvn -s settings.xml -B -q dependency:go-offline
 
 COPY src ./src
-RUN mvn -s settings.xml -B -q package -DskipTests
+RUN mvn -s settings.xml -B -q package -Dmaven.test.skip=true
 
 # ===== 运行阶段 =====
 ARG DOCKER_REGISTRY=docker.io/library/

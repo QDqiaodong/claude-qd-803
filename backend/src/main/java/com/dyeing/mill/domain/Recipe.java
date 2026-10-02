@@ -75,6 +75,10 @@ public class Recipe {
     @Column(name = "cost_per_kg", precision = 10, scale = 2)
     private BigDecimal costPerKg;
 
+    /** 内容版本号：每次保存 +1，待确认开缸单据此判断配方是否已变 */
+    @Column(name = "revision")
+    private Integer revision = 1;
+
     @Column(name = "create_time")
     private LocalDateTime createTime;
 

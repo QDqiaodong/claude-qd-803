@@ -68,6 +68,10 @@ public class DyeVat {
     @Column(name = "remark", length = 200)
     private String remark;
 
+    /** 当前已下达的开缸执行单号（缸体侧可追溯） */
+    @Column(name = "active_order_no", length = 40)
+    private String activeOrderNo;
+
     @Column(name = "deleted")
     private Integer deleted = 0;
 }
