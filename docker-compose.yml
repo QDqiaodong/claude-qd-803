@@ -87,6 +87,7 @@ services:
       REDIS_PORT: "6379"
       TZ: ${TZ}
       LANG: ${LANG}
+      EXECUTION_FAIL_AFTER_PARAMS: ${EXECUTION_FAIL_AFTER_PARAMS:-false}
     depends_on:
       mysql:
         condition: service_healthy

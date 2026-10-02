@@ -27,10 +27,14 @@ public class CurveService {
 
     private final ProcessCurveRepository curveRepository;
     private final FabricProfileRepository fabricProfileRepository;
+    private final ExecutionOrderService executionOrderService;
 
-    public CurveService(ProcessCurveRepository curveRepository, FabricProfileRepository fabricProfileRepository) {
+    public CurveService(ProcessCurveRepository curveRepository,
+                        FabricProfileRepository fabricProfileRepository,
+                        ExecutionOrderService executionOrderService) {
         this.curveRepository = curveRepository;
         this.fabricProfileRepository = fabricProfileRepository;
+        this.executionOrderService = executionOrderService;
     }
 
     public List<ProcessCurve> list() {
@@ -83,7 +87,9 @@ public class CurveService {
             curve.setStartTemp(payload.getStartTemp());
         }
         applyNodes(curve, payload.getNodes());
-        return curveRepository.save(curve);
+        ProcessCurve saved = curveRepository.save(curve);
+        executionOrderService.invalidateByCurve(id, "工艺曲线 " + saved.getCurveCode() + " 的节点或适用条件已改变，请重新创建开缸执行单");
+        return saved;
     }
 
     /**

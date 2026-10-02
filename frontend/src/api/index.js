@@ -44,6 +44,13 @@ export const assignCart = (id, payload) => http.post(`/carts/${id}/assign`, payl
 export const changeCartStatus = (id, payload) => http.patch(`/carts/${id}/status`, payload)
 export const cartCustomerStats = () => http.get('/carts/stats/customer')
 
+/* ============ 开缸执行单 ============ */
+export const listExecutionOrders = () => http.get('/execution-orders')
+export const getExecutionOrder = (id) => http.get(`/execution-orders/${id}`)
+export const previewExecutionOrder = (payload) => http.post('/execution-orders/preview', payload)
+export const createExecutionOrder = (payload) => http.post('/execution-orders', payload)
+export const issueExecutionOrder = (id, payload) => http.post(`/execution-orders/${id}/issue`, payload)
+
 /* ============ 染化料库存 ============ */
 export const listStock = () => http.get('/inventory')
 export const stockOverview = () => http.get('/inventory/overview')

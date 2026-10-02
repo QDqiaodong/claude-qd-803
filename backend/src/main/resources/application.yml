@@ -40,3 +40,8 @@ management:
     web:
       exposure:
         include: health,info
+
+mill:
+  execution:
+    # 验收“中途异常”时临时置 true：Redis 参数写入后抛错，验证数据库回滚与 Redis 恢复
+    fail-after-params: ${EXECUTION_FAIL_AFTER_PARAMS:false}

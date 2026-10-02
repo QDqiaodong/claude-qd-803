@@ -6,6 +6,7 @@
 
 SET NAMES utf8mb4;
 
+DROP TABLE IF EXISTS vat_execution_order;
 DROP TABLE IF EXISTS issue_record;
 DROP TABLE IF EXISTS chemical_stock;
 DROP TABLE IF EXISTS cloth_cart;
@@ -138,6 +139,43 @@ CREATE TABLE cloth_cart (
     KEY idx_cart_status (status),
     KEY idx_cart_vat (vat_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='布车流转';
+
+-- ---------------- 开缸执行单 ----------------
+CREATE TABLE vat_execution_order (
+    id                  BIGINT        NOT NULL AUTO_INCREMENT,
+    order_code          VARCHAR(32)   NOT NULL COMMENT '执行单编号',
+    status              VARCHAR(24)   NOT NULL COMMENT 'PENDING_CONFIRM/ISSUED/INVALID',
+    cart_id             BIGINT        NOT NULL,
+    cart_code           VARCHAR(32)   NOT NULL,
+    vat_id              BIGINT        NOT NULL,
+    vat_code            VARCHAR(32)   NOT NULL,
+    recipe_id           BIGINT        NOT NULL,
+    recipe_code         VARCHAR(32)   NOT NULL,
+    recipe_version_no   INT           NOT NULL,
+    curve_id            BIGINT        NOT NULL,
+    curve_code          VARCHAR(32)   NOT NULL,
+    source_revision     CHAR(64)      NOT NULL COMMENT '来源资料 SHA-256 指纹',
+    estimated_weight_kg DECIMAL(10,2) NULL COMMENT '布车折算重量',
+    estimated_minutes   INT           NULL COMMENT '曲线预计总时长',
+    key_temp            DECIMAL(5,1)  NULL COMMENT '最高保温温度',
+    target_temp         DECIMAL(5,1)  NULL COMMENT '下达目标温度',
+    hold_minutes        INT           NULL COMMENT '下达保温总时长',
+    machine_max_temp    DECIMAL(5,1)  NULL COMMENT '机台温度上限',
+    snapshot_json       LONGTEXT      NULL COMMENT '下达时完整工艺快照',
+    invalid_reason      VARCHAR(500)  NULL,
+    active_cart_id      BIGINT        GENERATED ALWAYS AS (CASE WHEN status = 'ISSUED' THEN cart_id ELSE NULL END) STORED COMMENT '并发防重：同一布车仅一张已下达单',
+    created_by          VARCHAR(32)   NULL,
+    confirmed_by        VARCHAR(32)   NULL,
+    create_time         DATETIME      NULL,
+    issue_time          DATETIME      NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_execution_order_code (order_code),
+    UNIQUE KEY uk_issued_cart (active_cart_id),
+    KEY idx_execution_status (status),
+    KEY idx_execution_recipe (recipe_id),
+    KEY idx_execution_curve (curve_id),
+    KEY idx_execution_vat (vat_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='开缸执行单';
 
 -- ---------------- 染料与助剂库存 ----------------
 CREATE TABLE chemical_stock (

@@ -28,7 +28,7 @@
       <div class="grid-panel">
         <div class="grid-panel__head">
           <span class="grid-panel__title">印染车间 · 模块启动台</span>
-          <span class="grid-panel__hint">点击格子切换模块（{{ routes.length }} 个入口 / 5 个模块）</span>
+          <span class="grid-panel__hint">点击格子切换模块（{{ routes.length }} 个入口 / 6 个模块）</span>
         </div>
         <div class="grid-9">
           <div
@@ -61,6 +61,7 @@ const ICONS = {
   recipe: ['M4 5h16v14H4z', 'M8 9h8', 'M8 13h8', 'M8 17h5'],
   curve: ['M3 20h18', 'M3 20V4', 'M5 17l4-8 3 5 5-10'],
   cart: ['M5 7h14v11H5z', 'M8 7V4h8v3', 'M5 12h14'],
+  execution: ['M5 4h14v16H5z', 'M8 8h8', 'M8 12h8', 'M8 16h5', 'M15 15l2 2 4-4'],
   stock: ['M4 7l8-4 8 4v10l-8 4-8-4z', 'M4 7l8 4 8-4', 'M12 11v10'],
   running: ['M10 13V5a2 2 0 114 0v8a4 4 0 11-4 0z', 'M12 9v6'],
   stat: ['M3 20h18', 'M6 20V12', 'M11 20V6', 'M16 20v-6'],

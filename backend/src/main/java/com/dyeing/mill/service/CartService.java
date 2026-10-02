@@ -30,10 +30,14 @@ public class CartService {
 
     private final ClothCartRepository cartRepository;
     private final DyeVatRepository vatRepository;
+    private final ExecutionOrderService executionOrderService;
 
-    public CartService(ClothCartRepository cartRepository, DyeVatRepository vatRepository) {
+    public CartService(ClothCartRepository cartRepository,
+                       DyeVatRepository vatRepository,
+                       ExecutionOrderService executionOrderService) {
         this.cartRepository = cartRepository;
         this.vatRepository = vatRepository;
+        this.executionOrderService = executionOrderService;
     }
 
     /** 报废布车已被 @SQLRestriction 全局过滤，这里拿到的都是有效布车 */
@@ -51,13 +55,18 @@ public class CartService {
      */
     @Transactional
     public ClothCart assign(Long id, CartAssignRequest request) {
-        ClothCart cart = detail(id);
+        ClothCart cart = cartRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new BizException("布车不存在或已报废：id=" + id));
         Long vatId = request.getVatId();
         if (vatId == null) {
             throw new BizException("请先选择要排入的染缸");
         }
         DyeVat vat = vatRepository.findById(vatId)
                 .orElseThrow(() -> new BizException("染缸不存在：id=" + vatId));
+
+        if (executionOrderService.hasIssuedOrder(cart.getId())) {
+            throw new BizException("布车 " + cart.getCartCode() + " 已有下达生效的开缸执行单，不能重新排缸");
+        }
 
         LocalDateTime start = parseTime(request.getStartTime(), "开始时间");
         LocalDateTime end = parseTime(request.getEndTime(), "结束时间");
@@ -82,12 +91,25 @@ public class CartService {
             }
         }
 
+        Long oldVatPk = cart.getVatId();
+        String oldVatCode = cart.getVatCode();
+        LocalDateTime oldStart = cart.getDyeStartTime();
+        LocalDateTime oldEnd = cart.getDyeEndTime();
         cart.setVatId(vat.getId());
         cart.setVatCode(vat.getVatCode());
         cart.setDyeStartTime(start);
         cart.setDyeEndTime(end);
         cart.setStatus("DYEING");
-        return cartRepository.save(cart);
+        ClothCart saved = cartRepository.save(cart);
+        boolean cartAssignmentChanged = !java.util.Objects.equals(oldVatPk, vat.getId())
+                || !java.util.Objects.equals(oldVatCode, vat.getVatCode())
+                || !java.util.Objects.equals(oldStart, start)
+                || !java.util.Objects.equals(oldEnd, end);
+        if (cartAssignmentChanged) {
+            executionOrderService.invalidateByCart(saved.getId(), "布车 " + saved.getCartCode()
+                    + " 的排缸结果已变更为 " + oldVatCode + " → " + saved.getVatCode() + "（" + start + " ~ " + end + "）");
+        }
+        return saved;
     }
 
     /**
@@ -95,15 +117,26 @@ public class CartService {
      */
     @Transactional
     public ClothCart changeStatus(Long id, CartStatusRequest request) {
-        ClothCart cart = detail(id);
+        ClothCart cart = cartRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new BizException("布车不存在或已报废：id=" + id));
         String status = request.getStatus();
         if (status == null || status.isBlank()) {
             throw new BizException("目标状态不能为空");
         }
+        String oldStatus = cart.getStatus();
+        BigDecimal oldMeters = cart.getMeters();
+        Long oldVatPk = cart.getVatId();
+        String oldVatCode = cart.getVatCode();
+        java.time.LocalDateTime oldStart = cart.getDyeStartTime();
+        java.time.LocalDateTime oldEnd = cart.getDyeEndTime();
+        Integer oldReworkTimes = cart.getReworkTimes();
         if ("DYEING".equals(status) && cart.getVatId() == null) {
             throw new BizException("布车 " + cart.getCartCode() + " 尚未排缸，请先选择染缸再转入在染");
         }
         if ("REWORK".equals(status)) {
+            if (executionOrderService.hasIssuedOrder(cart.getId())) {
+                throw new BizException("布车 " + cart.getCartCode() + " 已有下达生效的开缸执行单，不能直接转返修");
+            }
             cart.setReworkTimes((cart.getReworkTimes() == null ? 0 : cart.getReworkTimes()) + 1);
             cart.setVatId(null);
             cart.setVatCode(null);
@@ -117,7 +150,19 @@ public class CartService {
             cart.setReworkTimes(request.getReworkTimes());
         }
         cart.setStatus(status);
-        return cartRepository.save(cart);
+        ClothCart saved = cartRepository.save(cart);
+        boolean sourceChanged = !java.util.Objects.equals(oldStatus, saved.getStatus())
+                || !java.util.Objects.equals(oldMeters, saved.getMeters())
+                || !java.util.Objects.equals(oldVatPk, saved.getVatId())
+                || !java.util.Objects.equals(oldVatCode, saved.getVatCode())
+                || !java.util.Objects.equals(oldStart, saved.getDyeStartTime())
+                || !java.util.Objects.equals(oldEnd, saved.getDyeEndTime())
+                || !java.util.Objects.equals(oldReworkTimes, saved.getReworkTimes());
+        if (sourceChanged) {
+            executionOrderService.invalidateByCart(saved.getId(), "布车 " + saved.getCartCode()
+                    + " 的状态或排缸结果已改变为 " + saved.getStatus());
+        }
+        return saved;
     }
 
     /**

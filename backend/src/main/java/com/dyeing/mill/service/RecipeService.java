@@ -30,10 +30,14 @@ public class RecipeService {
 
     private final RecipeRepository recipeRepository;
     private final ClothCartRepository cartRepository;
+    private final ExecutionOrderService executionOrderService;
 
-    public RecipeService(RecipeRepository recipeRepository, ClothCartRepository cartRepository) {
+    public RecipeService(RecipeRepository recipeRepository,
+                         ClothCartRepository cartRepository,
+                         ExecutionOrderService executionOrderService) {
         this.recipeRepository = recipeRepository;
         this.cartRepository = cartRepository;
+        this.executionOrderService = executionOrderService;
     }
 
     public List<Recipe> list() {
@@ -65,7 +69,10 @@ public class RecipeService {
     public Recipe update(Long id, RecipePayload payload) {
         Recipe recipe = detail(id);
         applyPayload(recipe, payload);
-        return recipeRepository.save(recipe);
+        Recipe saved = recipeRepository.save(recipe);
+        executionOrderService.invalidateByRecipe(id, "配方 " + saved.getRecipeCode()
+                + " 的发布状态、版本或明细已被编辑，请重新创建开缸执行单");
+        return saved;
     }
 
     /**
@@ -111,6 +118,7 @@ public class RecipeService {
         Recipe recipe = detail(id);
         recipe.setDeleted(1);
         recipeRepository.save(recipe);
+        executionOrderService.invalidateByRecipe(id, "配方 " + recipe.getRecipeCode() + " 已删除，来源资料不可用");
     }
 
     /**

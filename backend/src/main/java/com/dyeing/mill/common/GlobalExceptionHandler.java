@@ -51,6 +51,15 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 并发锁等待超时：409，提示用户刷新后以已生效单据为准。
+     */
+    @ExceptionHandler(org.springframework.dao.PessimisticLockingFailureException.class)
+    public ResponseEntity<ApiResponse<Void>> handleLock(org.springframework.dao.PessimisticLockingFailureException e) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.fail("同一布车正有另一笔开缸操作，请刷新后查看已生效执行单"));
+    }
+
+    /**
      * 兜底：500
      */
     @ExceptionHandler(Exception.class)

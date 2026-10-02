@@ -3,10 +3,11 @@ import VatBoard from '../views/VatBoard.vue'
 import RecipeLab from '../views/RecipeLab.vue'
 import CurveEditor from '../views/CurveEditor.vue'
 import CartKanban from '../views/CartKanban.vue'
+import ExecutionOrders from '../views/ExecutionOrders.vue'
 import Inventory from '../views/Inventory.vue'
 
 /**
- * 五个业务模块。九宫格里 9 个格子共用这 5 个页面，
+ * 六个业务模块。启动台 10 个格子共用这些页面，
  * 其中 4 个格子是带预设参数的快捷入口（同一页面不同落点）。
  */
 export const routes = [
@@ -14,6 +15,7 @@ export const routes = [
   { path: '/recipes', name: '染色配方', desc: '色卡条 · 染料阶梯表', icon: 'recipe', component: RecipeLab, query: {} },
   { path: '/curves', name: '工艺曲线', desc: 'SVG 节点可拖动编辑器', icon: 'curve', component: CurveEditor, query: {} },
   { path: '/carts', name: '布车流转', desc: '三列看板 · 原生拖拽', icon: 'cart', component: CartKanban, query: {} },
+  { path: '/execution', name: '开缸执行单', desc: '资料核对 · 失效锁定 · 下达快照', icon: 'execution', component: ExecutionOrders, query: {} },
   { path: '/inventory', name: '染化料库存', desc: '库存 · 预警 · 领用', icon: 'stock', component: Inventory, query: {} },
   { path: '/vats', name: '在制缸位', desc: '只看升温/保温中的缸', icon: 'running', component: VatBoard, query: { view: 'running' } },
   { path: '/recipes', name: '色号缸次', desc: '按色号统计缸次与米数', icon: 'stat', component: RecipeLab, query: { view: 'stat' } },
